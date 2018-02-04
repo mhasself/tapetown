@@ -1,0 +1,351 @@
+#!/bin/env python
+
+USAGE="""
+%prog [options] [commands]
+
+Status / database access:
+
+  status
+  backup_info [file_number]
+  where_is [filename]
+
+Archiving and confirmation:
+
+  archive
+  confirm [file_number]
+
+Tape commands
+
+  tapes - list tapes and their status.
+  open_tape - initialize a new tape.
+  close_tape - finalize tape and unassociate unarchived jobs.
+
+Job setup
+
+  import [filename]
+  assign
+
+"""
+
+import taped
+from tapedb import TapeDB, BackupItem
+import sys, os, time
+
+#
+# Main configuration.  Set tape drive and ssh connections here.
+# Also the name of the database file and the active tape name.
+#
+
+import optparse as o
+o = o.OptionParser(usage=USAGE)
+o.add_option('--retry', action='store_true')
+o.add_option('--no-db-update', action='store_true')
+o.add_option('-c', '--config-file', default='tape.conf')
+opts, args = o.parse_args()
+
+from ConfigParser import ConfigParser
+cfg = ConfigParser()
+cfg.read(opts.config_file)
+
+tape_dev = cfg.get('default', 'tape_device')
+db_file = cfg.get('default', 'database_file')
+ssh_cmd = cfg.get('default', 'ssh_command')
+
+td = taped.TapeDrive(tape_dev, ssh_cmd)
+db = TapeDB(db_file)
+
+tape_id, tape_name = db.get_active_tape()
+
+EXIT_NO_DATA = 40
+EXIT_REQUEST = 41
+
+exit_file = 'exit_file'
+if os.path.exists(exit_file):
+    print 'Exiting with prejudice because of presence of %s' % exit_file
+    sys.exit(EXIT_REQUEST)
+
+
+#
+# Signal handler?  This doesn't really work.
+#
+import signal
+last_exit_flag = 0
+def ctrlc_handler(signum, frame):
+    global last_exit_flag
+    print 'Ctrl-C detected.  Will exit at next convenient opportunity'
+    print '(press again within 1 second will raise an immediate exception).'
+    now = time.time()
+    if now - last_exit_flag < 1.:
+        raise RuntimeError, "user requested immediate exit."
+    last_exit_flag = now
+
+signal.signal(signal.SIGINT, ctrlc_handler)
+
+def print_tape_report(db, tape_name):
+    report = db.get_tape_report(tape_name)
+    print 'Current layout of work on tape "%s":' % tape_name
+    for row in report:
+        print '   %5i - %5i : %s' % (row[1], row[2], row[0])
+    print
+
+def print_usage_summary(db, tape_name):
+    print
+    if tape_name is not None:
+        header, target, tags =  \
+            ('Work on "%s"' % tape_name, tape_name, ['confirmed', 'recorded', 'assigned'])
+        print header
+        total_size = 0
+        for k in tags:
+            jobs = db.get_tape_work(target, k)
+            size = sum([j.get_target_info().size_kb for j in jobs]) / 1e6
+            print '   type %-20s: %6i (%9.3f GB)' % (k, len(jobs), size)
+            total_size += size
+        print '   total usage: %.3f GB' % total_size
+        print
+    targets = db.get_unassigned_targets() 
+    print 'There are %i unassigned targets.' % len(targets)
+    print
+    
+
+#
+# Possibly perform an action, such as writing a new archive or confirming
+# an archive.
+#
+
+command = 'status' # default command
+if tape_name is None:
+    print 'No tape marked as active.'
+    command = 'tapes'
+
+token = None
+if len(args) > 0:
+    command = args[0]
+if len(args) > 1:
+    token = args[1]
+
+if command == 'status':
+    if token is not None:
+        tape_name = token
+    print_usage_summary(db, tape_name)
+    print_tape_report(db, tape_name)
+    sys.exit(0)
+
+if command == 'tapes':
+    print 'All tapes in database:'
+    fmt = '{name:20} {online_flag:2} {serial:10} {id:>5} {status:20}'
+    header = fmt.format(name='Name', id='ID', status='Status', serial='SerialNo',
+                        online_flag='ON')
+    print header
+    print '-'*len(header)
+    for info in db.get_tape_info(token):
+        info['online_flag'] = {0: ' ', 1: '*'}[info['online']]
+        print fmt.format(**info)
+    print
+    sys.exit(0)
+
+if command == 'open_tape':
+    assert(token is not None) # Name for new tape!
+    tape_name = token
+    print 'This action will create a new tape entry with name "%s".' % tape_name
+    yn = raw_input('Do you wish to proceed?  [yn] ')
+    if not yn in ['y', 'yes', 'Y']:
+        print 'Aborted.'
+        sys.exit(1)
+    print
+    serno = raw_input('Serial number? [blank is ok] ')
+    print
+    online = raw_input('Put the tape online now? [yn] ')
+    for v,L in [(True, ('y', 'yes', 'Y')),
+                (False, ('n', 'no', 'N'))]:
+        if online in L:
+            online = v
+            break
+    else:
+        print 'Invalid response.'
+        sys.exit(1)
+    
+    print 'Creating tape entry...'
+    db.create_tape(tape_name, serno, status='open', online=online)
+
+
+if command == 'close_tape':
+    if token is not None:
+        tape_name = token
+    print 'This action will apply to tape "%s".' % tape_name
+    print
+    print 'This action will mark the tape as full and dissociate all '\
+        'non-archived targets from this tape.'
+    print
+
+    yn = raw_input('Do you wish to proceed?  [yn] ')
+    if not yn in ['y', 'yes', 'Y']:
+        print 'Aborted.'
+        sys.exit(1)
+
+    jobs = db.get_tape_work(tape_name, ['assigned'])
+    print 'Found %i jobs to dissociate.' % len(jobs)
+    for j in jobs:
+        j.status = 'new'
+        j.commit()
+
+    db.close_tape(tape_name)
+
+if command == 'backup_info':
+    file_number = int(token)
+    print
+    print 'Looking up file_number %i on tape "%s"' % (file_number, tape_name)
+    jobs = BackupItem.by_tape_id(db, tape_name, file_number)
+    print 'Found %i records:' % len(jobs)
+    for j in jobs:
+        info = j.get_target_info()
+        print '  Status: %-20s Target_id=%7i : size= %10.3fGB : name= %s' % (
+            j.status, j.target_id, info.size_kb/1e6, info.name)
+    print
+    sys.exit(0)
+
+if command == 'where_is':
+    for row in db.find_file(token):
+        print row
+    sys.exit(0)
+
+
+if command == 'archive':
+    jobs = db.get_tape_work(tape_name, 'assigned')
+    if len(jobs) == 0:
+        sys.exit(EXIT_NO_DATA) # no jobs left.
+    job = jobs[0]
+    info = job.get_target_info()
+
+    report = db.get_tape_report(tape_name)
+    if len(report) == 0:
+        next_file_number = 0
+    else:
+        next_file_number = report[-1][-1]+1
+    print 'Seeking to file_number=%i' % next_file_number
+    td.goto(next_file_number)
+
+    print 'Copying %.3f GB from network to tape...' % (info.size_kb / 1e6)
+    t0 = time.time()
+    code, out, err = td.archive_remote(info.name)
+    if code == 0:
+        if opts.no_db_update:
+            print 'Archive job succeeded, but DB will not be updated.'
+        else:
+            print '... success.'
+            print 'Marking record as archived.'
+            job.status = 'recorded'
+            job.file_number = next_file_number
+            job.commit()
+    else:
+        print '... exit code=%i' % code
+        print out, err
+    print 'Time elapsed:  %.1f minutes ' % ((time.time() - t0)/60.)
+    
+if command == 'confirm':
+    # get file number...
+    job_mask = ['recorded']
+    if opts.retry:
+        job_mask.append('confirmed')
+    jobs = db.get_tape_work(tape_name, job_mask)
+    print 'Found %i jobs to confirm.' % len(jobs)
+    if len(jobs) == 0:
+        sys.exit(EXIT_NO_DATA)
+    if token == 'next':
+        token = jobs[0].file_number
+    elif token is None:
+        print 'The next one is file_number=%i.' % jobs[0].file_number
+        print 'Pass a file_number, or "next" to process the next job.'
+        sys.exit(1)
+    for j in jobs:
+        if int(token) == j.file_number:
+            print 'Matched file_number=%i' % j.file_number
+            break
+    else:
+        print 'Could not find outstanding job at file_number=%s' % token
+        sys.exit(1)
+    # Run the confirmation.
+    info = j.get_target_info()
+    assert(j.file_number >= 0)
+    print 'Seeking to file_number %i...' % j.file_number
+    td.goto(j.file_number)
+    print 'Checksumming %.3f GB from tape...' % (info.size_kb / 1e6)
+    CD = td.tape_checksums()
+    CD1 = {}
+    for row in CD:
+        fpath, fname = os.path.split(row[1])
+        assert (fpath == info.name[1:])
+        CD1[fname] = row[0]
+    ok = True
+    for name, size_kb, md5 in info.files:
+        if md5 != CD1.get(name):
+            print 'Failed md5sum: %s' % name
+            ok = False
+    if ok:
+        if opts.no_db_update:
+            print 'Confirm job succeeded, but DB will not be updated.'
+        else:
+            print 'Marking record as confirmed.'
+            j.status = 'confirmed'
+            j.commit()
+    print
+
+if command == 'import':
+
+    print 'Reading file %s...' % token
+    targets = [line.strip() for line in open(token)]
+    print
+    print ('You have proposed to import %i targets from %s. '
+           'They will not yet be assigned to a specific tape.' % (len(targets), token))
+    print 
+    yn = raw_input('Do you wish to proceed?  [yn] ')
+    if not yn in ['y', 'yes', 'Y']:
+        print 'Aborted.'
+        sys.exit(1)
+
+    file_number = 0
+    for target in targets:
+        # Check for target existence...
+        recs = BackupItem.for_target(db, target)
+        if len(recs):
+            #print 'Backup already exists.'
+            if recs[0].status != 'assigned':
+                print target, recs
+            if opts.retry:
+                continue
+            raise RuntimeError
+
+        print 'Getting files and checksums for target "%s"...' % target
+        info = td.remote_target_info(target)
+        print ' ... adding %i files to local database.' % len(info)
+        db.add_files(info)
+        print
+
+if command == 'assign':
+    if token is not None:
+        tape_name = token
+
+    tape_id = db.get_tape_id(tape_name)
+    targets = db.get_unassigned_targets() 
+    print '\nThere are %i unassigned targets.\n' % len(targets)
+    if len(targets) == 0:
+        sys.exit(EXIT_NO_DATA)
+
+    yn = raw_input('Do you wish to assign them to tape "%s"?  [yn] ' % tape_name)
+    if not yn in ['y', 'yes', 'Y']:
+        print 'Aborted.'
+        sys.exit(1)
+    
+    for target_id, name in targets:
+        backup = BackupItem.new(db, target_id)
+        backup.tape_id = tape_id
+        backup.status = 'assigned'
+        backup.commit()
+
+    print 'Done.\n'
+
+if last_exit_flag != 0:
+    sys.exit(EXIT_REQUEST)
+
+if os.path.exists(exit_file):
+    print 'Exiting with prejudice because of presence of %s' % exit_file
+    sys.exit(EXIT_REQUEST)

@@ -1,5 +1,6 @@
 #!/bin/bash
 
+TAPEOP='./tapeop'
 LOGFILE=backup.log
 op=$1
 
@@ -13,7 +14,7 @@ case $op in
     archive)
 	while true; do
 	    date
-	    python run_job.py archive || break
+	    $TAPEOP archive || break
 	    echo
 	    echo
 	done
@@ -22,9 +23,9 @@ case $op in
     confirm)
 	while true; do
 	    date
-	    python run_job.py status
+	    $TAPEOP status
 	    echo
-	    python run_job.py confirm next || break
+	    $TAPEOP confirm next || break
 	    echo
 	    echo
 	done

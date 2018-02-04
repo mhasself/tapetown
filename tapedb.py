@@ -124,7 +124,7 @@ class TapeDB:
 
     def find_file(self, filename):
         c = self.conn.cursor()
-        c.execute('select T.name,F.name,P.name,B.status,B.file_number '
+        c.execute('select T.name,F.name,F.md5sum,P.name,B.status,B.file_number '
                   'from targets as T join files as F join backups as B join tapes as P '
                   'where T.id=B.target_id and F.target_id=T.id and P.id=B.tape_id '
                   'and F.name = ?',
@@ -147,15 +147,23 @@ class TapeDB:
             return None, None
         return row
 
+    def set_active_tape(self, tape_name, commit=True):
+        c = self.conn.cursor()
+        c.execute('update tapes set online=0')
+        c.execute('update tapes set online=1 where name=?', (tape_name,))
+        if commit:
+            self.conn.commit()
+
+
     def create_tape(self, tape_name, serial, status=None, online=None):
         if status == None:
             status = 'open'
         assert(status in self.VALID_TAPE_STATUS)
         c = self.conn.cursor()
-        c.execute('insert into tapes (name,serial,status) values (?,?,?)', (tape_name,serial,status))
+        c.execute('insert into tapes (name,serial,status) values (?,?,?)',
+                  (tape_name,serial,status))
         if online:
-            c.execute('update tapes set online=0')
-            c.execute('update tapes set online=1 where name=?', (tape_name,))
+            self.set_active_tape(tape_name, commit=False)
         self.conn.commit()
         return self.get_tape_id(tape_name)
 

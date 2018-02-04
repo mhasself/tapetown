@@ -12,7 +12,7 @@ Show list of tapes
 
 Run:
 
-  python run_job.py tapes
+  tapeop tapes
 
 
 
@@ -48,7 +48,7 @@ Add "targets" to the database, for archiving [import]
 
 Run:
 
-  python run_job.py import FILENAME
+  tapeop import FILENAME
 
 The FILENAME is a file that lists the full paths to directories that
 need to be backed up.  This job will add those paths to the "targets"
@@ -63,7 +63,7 @@ Assign targets to a particular tape [assign]
 
 Run:
 
-  python run_job.py assign [TAPE_NAME]
+  tapeop assign [TAPE_NAME]
 
 This will associate any unassigned targets to the specified tape (or
 the Online tape if TAPE_NAME is not provided).  This effectively
@@ -77,7 +77,7 @@ Do a backup [archive]
 
 Run:
 
-  python run_job.py archive
+  tapeop archive
 
 Perform a single archiving action; this amounts to copying the next
 "assigned" target to the next open file_number on the active tape.
@@ -90,7 +90,7 @@ Confirm a backup [confirm]
 
 Run:
 
-  python run_job.py confirm [id]
+  tapeop confirm [id]
 
 where id is the file_number on the tape, or "next" to confirm the next
 unconfirmed item.  Options:
@@ -104,7 +104,7 @@ Close a tape [close_tape]
 
 Run:
 
-  python run_job.py close_tape [tape_name]
+  tapeop close_tape [tape_name]
 
 Causes the tape to be marked 'closed', taken offline, and all assigned
 (but not archived) jobs to be dissociated from the tape.  This leaves

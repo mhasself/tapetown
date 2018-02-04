@@ -8,6 +8,7 @@ Status / database access:
   status
   backup_info [file_number]
   where_is [filename]
+  tape_detail [tape_name]
 
 Archiving and confirmation:
 
@@ -19,6 +20,7 @@ Tape commands
   tapes - list tapes and their status.
   open_tape - initialize a new tape.
   close_tape - finalize tape and unassociate unarchived jobs.
+  activate_tape [tape_name] - mount an existing tape as 'online'.
 
 Job setup
 
@@ -132,7 +134,7 @@ if command == 'status':
 
 if command == 'tapes':
     print 'All tapes in database:'
-    fmt = '{name:20} {online_flag:2} {serial:10} {id:>5} {status:20}'
+    fmt = '{name:20} {online_flag:4} {serial:20} {id:>5} {status:20}'
     header = fmt.format(name='Name', id='ID', status='Status', serial='SerialNo',
                         online_flag='ON')
     print header
@@ -167,6 +169,12 @@ if command == 'open_tape':
     print 'Creating tape entry...'
     db.create_tape(tape_name, serno, status='open', online=online)
 
+if command == 'activate_tape':
+    assert(token is not None) # name of an existing tape
+    tape_name = token
+    print 'Setting %s as the online tape.' % tape_name
+    db.set_active_tape(tape_name)
+    print
 
 if command == 'close_tape':
     if token is not None:
@@ -189,6 +197,18 @@ if command == 'close_tape':
         j.commit()
 
     db.close_tape(tape_name)
+
+if command == 'tape_detail':
+    if token is not None:
+        tape_name = token
+    jobs = db.get_tape_work(tape_name, ['archived', 'confirmed'])
+    fmt = '{file_num:5} {status:10} {size:>12} {name}'
+    print fmt.format(file_num='#FNum', status='Status',
+                     size='Size_GB', name='Target_name')
+    for j in jobs:
+        info = j.get_target_info()
+        print fmt.format(file_num=j.file_number, status=j.status,
+                         size='%.3f' % (info.size_kb/1e6), name=info.name)
 
 if command == 'backup_info':
     file_number = int(token)

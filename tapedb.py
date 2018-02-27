@@ -116,6 +116,9 @@ class TapeDB:
         return int(row[0])
 
     def get_unassigned_targets(self):
+        """
+        Find targets that do not have an associated entry in backups.
+        """
         c = self.conn.cursor()
         c.execute('select T.id, T.name from targets as T left join backups as B '
                   'on T.id=B.target_id where B.target_id is null '
@@ -248,6 +251,8 @@ class BackupItem:
     
         A newly created object.  Neither tape_id nor file_number
         should be taken seriously.  Overall you should be suspicious.
+        To convey that a target does not have an assignment, destroy
+        the BackupItem rather than setting status='new'.
 
     "assigned"
 

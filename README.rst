@@ -112,3 +112,16 @@ the system in the right state for going to a new tape.  This is
 slightly interactive.  But it does NOT check for you that the tape is
 full or that you've confirmed all the archives.
 
+
+Add a new tape and activate it [open_tape]
+------------------------------------------
+
+Run:
+
+  tapeop open_tape [tape_name]
+
+The tape_name is not optional!  The script will ask you to confirm;
+then ask you for a serial number (which is non-critical meta-data and
+can be added/changed later, if need be).  It will also ask you if you
+want to put the tape online, meaning that is marked as active.
+

@@ -3,12 +3,14 @@
 USAGE="""
 %prog [options] [commands]
 
-Status / database access:
+Status / database access -- passive:
 
-  status
+  tapes - list tapes and their status.
+  status - show breakdown of the active tape and backup jobs.
   backup_info [file_number]
   where_is [filename]
   tape_detail [tape_name]
+  dump_manifest [output_dir]
 
 Archiving and confirmation:
 
@@ -17,7 +19,6 @@ Archiving and confirmation:
 
 Tape commands
 
-  tapes - list tapes and their status.
   open_tape - initialize a new tape.
   close_tape - finalize tape and unassociate unarchived jobs.
   activate_tape [tape_name] - mount an existing tape as 'online'.
@@ -193,8 +194,7 @@ if command == 'close_tape':
     jobs = db.get_tape_work(tape_name, ['assigned'])
     print 'Found %i jobs to dissociate.' % len(jobs)
     for j in jobs:
-        j.status = 'new'
-        j.commit()
+        j.destroy()
 
     db.close_tape(tape_name)
 
@@ -362,6 +362,12 @@ if command == 'assign':
         backup.commit()
 
     print 'Done.\n'
+
+if command == 'dump_manifest':
+    print 'Make a directory.'
+    print 'Write the list of tapes.'
+    print 'Write the list of tape -> target.'
+
 
 if last_exit_flag != 0:
     sys.exit(EXIT_REQUEST)

@@ -134,6 +134,8 @@ if command == 'status':
     sys.exit(0)
 
 if command == 'tapes':
+    targets = db.get_unassigned_targets() 
+    print '\nThere are %i unassigned targets.\n' % len(targets)
     print 'All tapes in database:'
     fmt = '{name:20} {online_flag:4} {serial:20} {id:>5} {status:20}'
     header = fmt.format(name='Name', id='ID', status='Status', serial='SerialNo',
@@ -324,6 +326,10 @@ if command == 'import':
 
     file_number = 0
     for target in targets:
+        # Is this target already scanned?
+        if db.get_target_id(target) != None:
+            print('Target "%s" already added; skipping.' % target)
+            continue
         # Check for target existence...
         recs = BackupItem.for_target(db, target)
         if len(recs):

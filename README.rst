@@ -57,6 +57,7 @@ The tapeop script will look for ``tape.conf`` in the current
 directory.  See ``tape.conf.ex`` in this repository for an example of
 what that should look like.  This is an ini-style config file with
 keys under the ``[default]`` heading.  The role of each key is:
+
 * ``database_file``: The filename for the sqlite database file.  E.g.,
   ``run1.sqlite``.
 * ``tape_device``: The device node for the tape device.  E.g.,
@@ -79,7 +80,7 @@ Status and Tape Management
 Show list of tapes
 ------------------
 
-Run:
+Run::
 
   tapeop tapes
 
@@ -90,7 +91,7 @@ status.  This is the default command when no tape is active.
 Show status of the current tape
 -------------------------------
 
-Run:
+Run::
 
   tapeop status [tape_name]
 
@@ -102,7 +103,7 @@ is the default command if a tape is active.
 Database queries
 ----------------
 
-Run:
+Run::
 
   tapeop backup_info [file_number]
   tapeop where_is [filename]
@@ -119,7 +120,7 @@ Backup job setup and execution
 Add "targets" to the database, for archiving [import]
 -----------------------------------------------------
 
-Run:
+Run:::
 
   tapeop import FILENAME
 
@@ -130,16 +131,16 @@ target.  (This action can thus take several minutes, as all the data
 must be loaded from disk on the host machine.)
 
 A good way to generate the path list is with a find command like this
-one:
+one::
 
-   find /mnt/act6/actpol/data/season4/ -mindepth 2 -maxdepth 2 -type d | \
-     grep -v merlin | sort > act6_s4.txt
+  find /mnt/act6/actpol/data/season4/ -mindepth 2 -maxdepth 2 -type d | \
+    grep -v merlin | sort > act6_s4.txt
 
 
 Assign targets to a particular tape [assign]
 --------------------------------------------
 
-Run:
+Run::
 
   tapeop assign [TAPE_NAME]
 
@@ -152,7 +153,7 @@ creates a "backup request", which can then be performed with an
 Do a backup [archive]
 ---------------------
 
-Run:
+Run::
 
   tapeop archive
 
@@ -168,7 +169,7 @@ Confirm a backup [confirm]
 --------------------------
 [status: good]
 
-Run:
+Run::
 
   tapeop confirm [id]
 
@@ -189,7 +190,7 @@ Tape activation / deactivation
 Close a tape [close_tape]
 -------------------------
 
-Run:
+Run::
 
   tapeop close_tape [tape_name]
 
@@ -203,7 +204,7 @@ full or that you've confirmed all the archives.
 Add a new tape and activate it [open_tape]
 ------------------------------------------
 
-Run:
+Run::
 
   tapeop open_tape [tape_name]
 
@@ -216,7 +217,7 @@ want to put the tape online, meaning that is marked as active.
 Activate a tape [activate_tape]
 -------------------------------
 
-Run:
+Run::
 
   tapeop activate_tape [tape_name]
 

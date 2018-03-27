@@ -127,11 +127,24 @@ class TapeDB:
 
     def find_file(self, filename):
         c = self.conn.cursor()
-        c.execute('select T.name,F.name,F.md5sum,P.name,B.status,B.file_number '
+        c.execute('select T.name as target_name, F.name as filename, '
+                  'F.md5sum as md5sum, P.name as tape_name, '
+                  'B.status as backup_status, B.file_number as tape_filenum, '
+                  'P.name as tape_name '
                   'from targets as T join files as F join backups as B join tapes as P '
                   'where T.id=B.target_id and F.target_id=T.id and P.id=B.tape_id '
                   'and F.name = ?',
                   (filename,))
+        return [r for r in c]
+
+    def get_files_in_target(self, target_id):
+        target_id = self.get_target_id(target_id)
+        c = self.conn.cursor()
+        c.execute('select T.name,F.name,F.md5sum '
+                  'from targets as T join files as F '
+                  'where F.target_id=T.id',
+                  'and T.id = ?',
+                  (target_id,))
         return [r for r in c]
 
     # Work with tapes.

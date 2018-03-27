@@ -42,9 +42,9 @@ practice a workflow is more like:
 - assign files to tape1
 - archive until tape1 is full (leaves some files outstanding)
 - confirm files on tape1
-- close tape1
+- close tape1 (this causes outstanding files to be unassigned)
 - open tape2
-- re-assign outstanding files to tape2
+- assign files to tape2
 - archive until tape2 is full or all files are backed up
 - confirm
 - etc.
@@ -100,18 +100,32 @@ assigned to the current tape, and the total size of each group.  This
 is the default command if a tape is active.
 
 
-Database queries
-----------------
+Dump description of tape contents
+---------------------------------
 
 Run::
 
-  tapeop backup_info [file_number]
-  tapeop where_is [filename]
-  tapeop tape_detail [tape_name]
-  tapeop dump_manifest [output_dir]
+  tapeop tape_detail [tape_name] [file_number] [-v]
 
-These commands print out information from the database... and will be
-the subject of an overhaul soon so don't get too attached to them.
+Prints contents of a tape in tabular format.  Without the -v
+(--verbose) option, there is a header line and then one line per
+target.  With the -v option, each target description line is followed
+by the detail of each file in the target, including size and checksum.
+The [file_number] is optional; without it, all targets on the tape
+will be printed.
+
+
+Find a file in the backup archive
+---------------------------------
+
+Run::
+
+  tapeop where_is [filename]
+
+Searches the backups (only assigned, archived, or confirmed jobs) for
+the indicated filename.  Note that the filename should be bare,
+without any path.  Prints out the location and status of all matching
+files.
 
 
 Backup job setup and execution
@@ -120,7 +134,7 @@ Backup job setup and execution
 Add "targets" to the database, for archiving [import]
 -----------------------------------------------------
 
-Run:::
+Run::
 
   tapeop import FILENAME
 
@@ -176,8 +190,8 @@ Run::
 where id is the file_number on the tape, or "next" to confirm the next
 unconfirmed item.  Options:
 
-  --retry : allows you to re-run confirm on an already-confirmed file.
-  --no-db-update : do the confirmation steps but don't change the database.
+* ``--retry``: allows you to re-run confirm on an already-confirmed file.
+* ``--no-db-update``: do the confirmation steps but don't change the database.
 
 Run ``tape_batch.bash confirm`` to repeatedly perform confirmation
 jobs (it will stop automatically on failure or if there are no

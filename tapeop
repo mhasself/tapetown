@@ -6,27 +6,39 @@ USAGE="""
 Status / database access -- passive:
 
   tapes - list tapes and their status.
+
   status - show breakdown of the active tape and backup jobs.
-  backup_info [file_number]
-  where_is [filename]
-  tape_detail [tape_name]
-  dump_manifest [output_dir]
 
-Archiving and confirmation:
+  tape_detail [tape_name] [file_number] [-v] - print contents of the
+    indicated tape, with status information.  If file_number is
+    provided, only that file_number is shown.  If -v is given, the
+    contents (filenames, sizes, checksums) are also printed.  This can
+    be used to generate backup summaries.
 
-  archive
-  confirm [file_number]
-
-Tape commands
+  where_is [filename] - search database for backups of the indicated
+    file.  Only knows about assigned (or archived or confirmed) files.
+  
+Tape setup commands
 
   open_tape - initialize a new tape.
+
   close_tape - finalize tape and unassociate unarchived jobs.
+
   activate_tape [tape_name] - mount an existing tape as 'online'.
 
 Job setup
 
-  import [filename]
-  assign
+  import [filename] - load list of backup targets from file.  (Causes
+    a remote connection + checksum session.)
+
+  assign - Assign targets to the active tape.
+
+Archiving and confirmation:
+
+  archive - copy next assigned target to the active tape.
+
+  confirm [file_number] - read back data from tape, checksum it, and
+    compare to database.
 
 """
 
@@ -44,6 +56,7 @@ o = o.OptionParser(usage=USAGE)
 o.add_option('--retry', action='store_true')
 o.add_option('--no-db-update', action='store_true')
 o.add_option('-c', '--config-file', default='tape.conf')
+o.add_option('-v', '--verbose', action='store_true')
 opts, args = o.parse_args()
 
 from ConfigParser import ConfigParser
@@ -133,7 +146,7 @@ if command == 'status':
     print_tape_report(db, tape_name)
     sys.exit(0)
 
-if command == 'tapes':
+elif command == 'tapes':
     targets = db.get_unassigned_targets() 
     print '\nThere are %i unassigned targets.\n' % len(targets)
     print 'All tapes in database:'
@@ -148,7 +161,7 @@ if command == 'tapes':
     print
     sys.exit(0)
 
-if command == 'open_tape':
+elif command == 'open_tape':
     assert(token is not None) # Name for new tape!
     tape_name = token
     print 'This action will create a new tape entry with name "%s".' % tape_name
@@ -172,14 +185,14 @@ if command == 'open_tape':
     print 'Creating tape entry...'
     db.create_tape(tape_name, serno, status='open', online=online)
 
-if command == 'activate_tape':
+elif command == 'activate_tape':
     assert(token is not None) # name of an existing tape
     tape_name = token
     print 'Setting %s as the online tape.' % tape_name
     db.set_active_tape(tape_name)
     print
 
-if command == 'close_tape':
+elif command == 'close_tape':
     if token is not None:
         tape_name = token
     print 'This action will apply to tape "%s".' % tape_name
@@ -200,38 +213,48 @@ if command == 'close_tape':
 
     db.close_tape(tape_name)
 
-if command == 'tape_detail':
+elif command == 'tape_detail':
+    # Args can be [], [tape_name], or [tape_name, file_num].
     if token is not None:
         tape_name = token
-    jobs = db.get_tape_work(tape_name, ['archived', 'confirmed'])
+    if len(args) > 2:
+        file_num = int(args[2])
+    else:
+        file_num = None
+
+    tape_info = db.get_tape_info(tape_name)
+    if len(tape_info) == 0:
+        raise RuntimeError, 'No tape found with name="%s"' % tape_name
+    assert len(tape_info) == 1
+
+    print '# Tape name="{name}" serial="{serial}"'.format(**tape_info[0])
+    jobs = db.get_tape_work(tape_name, ['recorded', 'confirmed'])
     fmt = '{file_num:5} {status:10} {size:>12} {name}'
     print fmt.format(file_num='#FNum', status='Status',
                      size='Size_GB', name='Target_name')
     for j in jobs:
+        if file_num is not None and file_num != j.file_number:
+            continue
         info = j.get_target_info()
         print fmt.format(file_num=j.file_number, status=j.status,
                          size='%.3f' % (info.size_kb/1e6), name=info.name)
-
-if command == 'backup_info':
-    file_number = int(token)
-    print
-    print 'Looking up file_number %i on tape "%s"' % (file_number, tape_name)
-    jobs = BackupItem.by_tape_id(db, tape_name, file_number)
-    print 'Found %i records:' % len(jobs)
-    for j in jobs:
-        info = j.get_target_info()
-        print '  Status: %-20s Target_id=%7i : size= %10.3fGB : name= %s' % (
-            j.status, j.target_id, info.size_kb/1e6, info.name)
-    print
+        if opts.verbose:
+            for row in info.files:
+                fname, size_kb, md5 = row
+                print 'file %s %10.6f %s' % (md5, size_kb/1e6, fname)
     sys.exit(0)
 
-if command == 'where_is':
+elif command == 'where_is':
+    nlen = max([len(r['name']) for r in db.get_tape_info(None)])
+    fmt = '{tape_name:%i} {tape_filenum:>5} {backup_status:10} {md5sum:32} {target_name}{filename}' % nlen
+    print fmt.format(tape_name='#tape_name', tape_filenum='Fnum', backup_status='status',
+                     md5sum='md5sum', target_name='', filename='filename')
     for row in db.find_file(token):
-        print row
+        print fmt.format(**row)
     sys.exit(0)
 
 
-if command == 'archive':
+elif command == 'archive':
     jobs = db.get_tape_work(tape_name, 'assigned')
     if len(jobs) == 0:
         sys.exit(EXIT_NO_DATA) # no jobs left.
@@ -263,7 +286,7 @@ if command == 'archive':
         print out, err
     print 'Time elapsed:  %.1f minutes ' % ((time.time() - t0)/60.)
     
-if command == 'confirm':
+elif command == 'confirm':
     # get file number...
     job_mask = ['recorded']
     if opts.retry:
@@ -311,7 +334,7 @@ if command == 'confirm':
             j.commit()
     print
 
-if command == 'import':
+elif command == 'import':
 
     print 'Reading file %s...' % token
     targets = [line.strip() for line in open(token)]
@@ -346,7 +369,7 @@ if command == 'import':
         db.add_files(info)
         print
 
-if command == 'assign':
+elif command == 'assign':
     if token is not None:
         tape_name = token
 
@@ -369,11 +392,8 @@ if command == 'assign':
 
     print 'Done.\n'
 
-if command == 'dump_manifest':
-    print 'Make a directory.'
-    print 'Write the list of tapes.'
-    print 'Write the list of tape -> target.'
-
+else:
+    o.error('Unknown command "%s"' % command)
 
 if last_exit_flag != 0:
     sys.exit(EXIT_REQUEST)

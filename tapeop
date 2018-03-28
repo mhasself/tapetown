@@ -5,7 +5,8 @@ USAGE="""
 
 Status / database access -- passive:
 
-  tapes - list tapes and their status.
+  tapes [-v] - list tapes and their status.  Also shows amount of data
+    written, if -v is passed.
 
   status - show breakdown of the active tape and backup jobs.
 
@@ -150,13 +151,24 @@ elif command == 'tapes':
     targets = db.get_unassigned_targets() 
     print '\nThere are %i unassigned targets.\n' % len(targets)
     print 'All tapes in database:'
-    fmt = '{name:20} {online_flag:4} {serial:20} {id:>5} {status:20}'
+
+    tape_infos = db.get_tape_info(token)
+    nlen = max([4]+[len(r['name']) for r in tape_infos])
+    slen = max([7]+[len(r['serial']) for r in tape_infos])
+
+    fmt = '{name:%i} {online_flag:4} {serial:%i} {id:>5} {status:10}' % (nlen, slen)
+    if opts.verbose:
+        fmt += ' {size_gb:>10}'
     header = fmt.format(name='Name', id='ID', status='Status', serial='SerialNo',
-                        online_flag='ON')
+                        online_flag='ON', size_gb='WroteGB')
     print header
     print '-'*len(header)
-    for info in db.get_tape_info(token):
-        info['online_flag'] = {0: ' ', 1: '*'}[info['online']]
+    for info in tape_infos:
+        info['online_flag'] = {0: '.', 1: '*'}[info['online']]
+        if opts.verbose:
+            jobs = db.get_tape_work(info['name'], ['recorded', 'confirmed'])
+            size_gb = sum([j.get_target_info().size_kb for j in jobs]) / 1e6
+            info['size_gb'] = '%.3f' % size_gb
         print fmt.format(**info)
     print
     sys.exit(0)

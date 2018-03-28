@@ -82,10 +82,12 @@ Show list of tapes
 
 Run::
 
-  tapeop tapes
+  tapeop tapes [-v]
 
 Lists the tapes by their name and serial number, and shows their
-status.  This is the default command when no tape is active.
+status.  This is the default command when no tape is active.  Pass -v
+(--verbose) to also print the amount of data that has been written to
+the tape, in GB.
 
 
 Show status of the current tape

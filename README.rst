@@ -240,3 +240,48 @@ Run::
 For some tape that is already registered in the database, this brings
 the tape online so that the backups there can be inspected or
 extended.
+
+
+Be Paranoid
+===========
+
+How to check "by hand" that everything is working properly?  Once in a
+while it's reassuring to double-check that the archiving and
+confirmation are doing what we expect.
+
+The session below shows how to extract the archive at file number 100
+on the current tape, checksum the result, and compare those checksums
+to the database copy::
+
+  # Define my non-rewinding, non-compressing tape device.
+  # Commands to mt will refer to the value of $TAPE by default.
+
+  export TAPE=/dev/nst0
+
+
+  # Rewind the tape, then step forward to file_number... 100.
+
+  mt rewind
+  mt fsf 100
+  
+
+  # Dump the contents of this tape file to the tar command.  This 
+  # will recreate the tree of files in ./ .
+
+  cat $TAPE | tar -x
+  
+  
+  # Generate an md5sums file for this archive, based on values stored
+  # in the tapetown database.  Let's assume we're in the directory
+  # "~/tapework/" right now.
+
+  ./tapeop tape_detail act-2018-008 100 -v | \
+    awk '($1=="file") {printf "%s  %s\n", $2,$4;}' > md5sums.txt
+
+  
+  # Descend into the extracted directory, and run md5sum in
+  # verification mode.
+
+  cd mnt/act6/actpol/data/season4/mce3/14771/
+  md5sum -c ~/tapework/md5sums.txt 
+

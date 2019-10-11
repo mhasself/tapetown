@@ -58,7 +58,7 @@ class TapeDrive:
         find_cmd = 'find %s -type f' % fpath
         # Get file sizes
         code, out, err = run_cmd(
-            '%s "%s | xargs du"' % (self.ssh_cmd, find_cmd))
+            '%s "%s | xargs --no-run-if-empty du"' % (self.ssh_cmd, find_cmd))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
@@ -71,7 +71,7 @@ class TapeDrive:
         # And the md5sums
         print 'Getting md5sums...'
         code, out, err = run_cmd(
-            '%s "%s | xargs md5sum"' % (self.ssh_cmd, find_cmd))
+            '%s "%s | xargs --no-run-if-empty md5sum"' % (self.ssh_cmd, find_cmd))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError

@@ -92,13 +92,29 @@ class TapeDrive:
             raise RuntimeError
         return [x.split() for x in out.split('\n')]
 
-    def archive_remote(self, fpath):
+    def archive_remote(self, fpath, exclude_patterns=[]):
         fpath = os.path.normpath(fpath)
         print 'Archiving: %s' % fpath
+        # Modifiers to exclude handled children.
+        ex_pats = ' '.join(['--exclude="%s"' % p for p in exclude_patterns])
         code, out, err = run_cmd(
-            '%s tar -c %s > %s' % (self.ssh_cmd, fpath, self.nst))
+            '%s tar -c %s %s > %s' % (self.ssh_cmd, ex_pats, fpath, self.nst))
         assert(code == 0)
         return code, out, err
+
+
+class TapeDriveEmulator(TapeDrive):
+    def __init__(self, tar_dir, ssh_cmd=None):
+        self.tar_dir = tar_dir
+        self.ssh_cmd = ssh_cmd
+        self.goto(0)
+    def status(self):
+        return {'file_number': self._position}
+    def goto(self, file_number):
+        self._position = file_number
+        self.nst = os.path.join(self.tar_dir, 'file%05i.tar' % self._position)
+        return 0, '', ''
+
 
 if __name__ == '__main__':
     td = TapeDrive('/dev/nst0', '')

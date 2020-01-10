@@ -64,11 +64,16 @@ from ConfigParser import ConfigParser
 cfg = ConfigParser()
 cfg.read(opts.config_file)
 
-tape_dev = cfg.get('default', 'tape_device')
 db_file = cfg.get('default', 'database_file')
 ssh_cmd = cfg.get('default', 'ssh_command')
 
-td = taped.TapeDrive(tape_dev, ssh_cmd)
+if cfg.has_option('default', 'emulator_dir'):
+    tape_dev = cfg.get('default', 'emulator_dir')
+    td = taped.TapeDriveEmulator(tape_dev, ssh_cmd)
+else:
+    tape_dev = cfg.get('default', 'tape_device', None)
+    td = taped.TapeDrive(tape_dev, ssh_cmd)
+
 db = TapeDB(db_file)
 
 tape_id, tape_name = db.get_active_tape()
@@ -283,7 +288,8 @@ elif command == 'archive':
 
     print 'Copying %.3f GB from network to tape...' % (info.size_kb / 1e6)
     t0 = time.time()
-    code, out, err = td.archive_remote(info.name)
+    excluded = db.get_excluded_subdirs(info.name)
+    code, out, err = td.archive_remote(info.name, excluded)
     if code == 0:
         if opts.no_db_update:
             print 'Archive job succeeded, but DB will not be updated.'
@@ -329,14 +335,24 @@ elif command == 'confirm':
     CD = td.tape_checksums()
     CD1 = {}
     for row in CD:
-        fpath, fname = os.path.split(row[1])
-        assert (fpath == info.name[1:])
+        # Check prefix match; strip it off.
+        assert(row[1].startswith(info.name[1:] + '/'))
+        fname = row[1][len(info.name):]
         CD1[fname] = row[0]
     ok = True
     for name, size_kb, md5 in info.files:
-        if md5 != CD1.get(name):
+        if md5 != CD1.pop(name):
             print 'Failed md5sum: %s' % name
             ok = False
+
+    if len(CD1):
+        ok = False
+        print('Backup contained %i more files than expected!' % len(CD1))
+        print('For example:')
+        for k, v in CD1.items()[:5]:
+            print '    %s [%s]' % (k, v)
+        print()
+
     if ok:
         if opts.no_db_update:
             print 'Confirm job succeeded, but DB will not be updated.'
@@ -349,7 +365,7 @@ elif command == 'confirm':
 elif command == 'import':
 
     print 'Reading file %s...' % token
-    targets = [line.strip() for line in open(token)]
+    targets = [os.path.normpath(line.strip()) for line in open(token)]
     print
     print ('You have proposed to import %i targets from %s. '
            'They will not yet be assigned to a specific tape.' % (len(targets), token))
@@ -375,11 +391,18 @@ elif command == 'import':
                 continue
             raise RuntimeError
 
-        print 'Getting files and checksums for target "%s"...' % target
-        info = td.remote_target_info(target)
-        print ' ... adding %i files to local database.' % len(info)
-        db.add_files(info)
-        print
+        parent_id = db.get_target_parent(target)
+        if parent_id is None:
+            print 'Getting files and checksums for target "%s"...' % target
+            info = td.remote_target_info(target)
+            print ' ... adding %i files to local database.' % len(info)
+            db.add_files(info, target)
+            print
+        else:
+            print 'Processing child-dir "%s", re-assigning files...' % target
+            n_moved = db.reassign_from_parent(target)
+            print ' ... moved %i files to sub-target.' % n_moved
+
 
 elif command == 'assign':
     if token is not None:

@@ -23,6 +23,7 @@ TABLE_DEFS = {
     'targets': [
         "`id` integer primary key autoincrement",
         "`name` varchar(2048) unique",
+        "`parent_id` integer default null"
         ],
     'backups': [
         "`id` integer primary key autoincrement",
@@ -75,7 +76,7 @@ class TapeDB:
                   'where name=?', (fpath,))
         return c.fetchone()[0]
         
-    def add_files(self, file_data):
+    def add_files(self, file_data, prefix=None):
         """
         Introduce files to the database, creating new targets as
         necessary.  The file_data is a list of tuples of the form
@@ -89,18 +90,29 @@ class TapeDB:
         add will be blocked.  Add all files for a target before you
         "assign" it to a tape.
         """
+        if prefix is not None:
+            print 'Adding files to target %s' % prefix
+            target_id = self.target_create(prefix)
+            if len(BackupItem.for_target(self, target_id)) != 0:
+                raise RuntimeError, 'Backup configurations exist for target: %s' % prefix
 
         base = None
         c = self.conn.cursor()
         for row in file_data:
             name, size, md5 = row
-            _base, name = os.path.split(name)
-            if base != _base:
-                base = _base
-                print 'Adding files to target %s' % base
-                target_id = self.target_create(base)
-                if len(BackupItem.for_target(self, target_id)) != 0:
-                    raise RuntimeError, 'Backup configurations exist for target: %s' % base
+            if prefix is not None:
+                assert(name.startswith(prefix))
+                name = name[len(prefix):]
+                while name[0] == '/':
+                    name = name[1:]
+            else:
+                _base, name = os.path.split(name)
+                if base != _base:
+                    base = _base
+                    print 'Adding files to target %s' % base
+                    target_id = self.target_create(base)
+                    if len(BackupItem.for_target(self, target_id)) != 0:
+                        raise RuntimeError, 'Backup configurations exist for target: %s' % base
             c.execute('insert or replace into files (target_id, name, md5sum, size_kb) values '
                       '(?,?,?,?)', (target_id, name, md5, size))
         self.conn.commit()
@@ -114,6 +126,67 @@ class TapeDB:
         if row == None:
             return None
         return int(row[0])
+
+    def get_target_parent(self, target_name):
+        """Checks if target has a parent in the database already, and
+        if so returns the id."""
+        test_path = target_name
+        while True:
+            test_path = os.path.split(test_path)[0]
+            if test_path in ['/', '']: break
+            target_id = self.get_target_id(test_path)
+            if target_id is not None:
+                return target_id
+        return None
+
+    def reassign_from_parent(self, child_target_name):
+        """
+        A target is the child of another target if it is a
+        sub-directory (at any level) of that parent.  This function
+        gets or creates the target_id for the child_target_name, and
+        reassigns any files that lie in the child's tree from the
+        parent to the child.
+
+        When building the target/file database, it's important to add
+        parent directories before children; i.e. '/root', then
+        '/root/dir1', and then '/root/dir1/some/deep/other/dir'.
+        """
+        parent_id = self.get_target_parent(child_target_name)
+        c = self.conn.execute('select name from targets where id=?',
+                              (parent_id,))
+        parent_name = c.fetchone()[0]
+        child_id = self.get_target_id(child_target_name)
+        assert(parent_id is not None)
+        if child_id is None:
+            child_id = self.target_create(child_target_name)
+        assert(child_id is not None)
+        # Make sure the child target points to the parent, so its path
+        # can easily be excluded when making the parent's archive.
+        self.conn.execute('update targets set parent_id=? where id=?',
+                          (parent_id, child_id))
+        # What's the path delta between parent and child?
+        assert(child_target_name.startswith(parent_name))
+        path_delta = child_target_name[len(parent_name):]
+        assert path_delta[0] == '/' and path_delta[-1] != '/'
+        path_delta = path_delta[1:] + '/'
+        c = self.conn.execute(
+            'update files set target_id=?, name=substr(name,?) '
+            'where target_id=? and substr(name,1,?)==?',
+            (child_id, len(path_delta)+1,
+             parent_id, len(path_delta), path_delta))
+        n = c.rowcount
+        self.conn.commit()
+        return n
+
+    def get_excluded_subdirs(self, target_id):
+        """Return the names of targets that are direct children of
+        this target.  This is equivalent to the list of sub-dirs that
+        should be excluded from this target's tar archive creation
+        command."""
+        target_id = self.get_target_id(target_id)
+        c = self.conn.execute('select name from targets where parent_id=?',
+                              (target_id,))
+        return [r[0] for r in c]
 
     def get_unassigned_targets(self):
         """

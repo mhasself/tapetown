@@ -39,6 +39,16 @@ class TapeDrive:
         return [line.strip().split() for line in out.split('\n')
                 if line.strip() != '']
 
+    def tape_files(self):
+        """Read tar archive from current position on the tape and get
+        list of files.  Note this includes directories and symlinks
+        (unlike tape_checksums)."""
+        code, out, err = run_cmd(
+            'dd if=%s bs=512k | tar -t ' % self.nst)
+        assert(code == 0)
+        return [line.strip() for line in out.split('\n')
+                if line.strip() != '']
+
     def goto(self, file_number):
         here = self.status()['file_number']
         assert file_number >= 0
@@ -53,6 +63,12 @@ class TapeDrive:
         return code, out, err
 
     def remote_target_info(self, fpath):
+        """
+        Connect to the remote (possibly multiple times) and determine
+        file sizes and md5sums of all items below fpath.  Returns list
+        of tuples (filename, file_size_kB, md5sum).  For symlinks,
+        file_size is 0 and md5sum is the string 'symlink'.
+        """
         fpath = os.path.normpath(fpath)
         info = {}
         find_cmd = 'find %s -type f' % fpath
@@ -80,6 +96,20 @@ class TapeDrive:
             md5, filename = line.split()
             assert filename in info
             info[filename].append(md5)
+        data = [(k,) + tuple(v) for k, v in info.items()]
+        # And symlinks :P
+        print 'Getting symlinks...'
+        find_cmd = 'find %s -type l' % fpath
+        code, out, err = run_cmd(
+            '%s "%s"' % (self.ssh_cmd, find_cmd))
+        if code != 0:
+            print 'Error!', out, err
+            raise RuntimeError
+        for line in out.split('\n'):
+            if line.strip() == '': continue
+            filename = line
+            info[filename] = [0, 'symlink']
+        # One big list.
         data = [(k,) + tuple(v) for k, v in info.items()]
         return sorted(data)
 

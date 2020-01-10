@@ -339,11 +339,33 @@ elif command == 'confirm':
         assert(row[1].startswith(info.name[1:] + '/'))
         fname = row[1][len(info.name):]
         CD1[fname] = row[0]
+
+    # If this archive has symlinks, then we need list the contents of
+    # the archive and record the presence of those pseudo-files.
+    n_symlinks = sum([f[2] == 'symlink' for f in info.files])
+    if n_symlinks:
+        print 'Re-seeking to file_number %i...' % j.file_number
+        td.goto(j.file_number)
+        print 'Confirming %i symlinks...' % n_symlinks
+        all_files = td.tape_files()
+        for fname in all_files:
+            if fname.endswith('/'):
+                continue
+            # Check prefix match; strip it off.
+            assert(fname.startswith(info.name[1:] + '/'))
+            fname = fname[len(info.name):]
+            if fname not in CD1:
+                CD1[fname] = 'symlink'
+
     ok = True
     for name, size_kb, md5 in info.files:
+        if opts.verbose:
+            print '%s [%s]...' % (name, md5),
         if md5 != CD1.pop(name):
             print 'Failed md5sum: %s' % name
             ok = False
+        elif opts.verbose:
+            print 'ok'
 
     if len(CD1):
         ok = False

@@ -62,7 +62,8 @@ class TapeDrive:
         assert(code == 0)  # goto failed
         return code, out, err
 
-    def remote_target_info(self, fpath):
+    def remote_target_info(self, fpath, excluded_subdirs=[],
+                           verbosity=0):
         """
         Connect to the remote (possibly multiple times) and determine
         file sizes and md5sums of all items below fpath.  Returns list
@@ -71,23 +72,27 @@ class TapeDrive:
         """
         fpath = os.path.normpath(fpath)
         info = {}
-        find_cmd = 'find %s -type f' % fpath
+        find_cmd = 'find %s -maxdepth 1 -mindepth 1' % fpath
         # Get file sizes
         code, out, err = run_cmd(
-            '%s "%s | xargs --no-run-if-empty du"' % (self.ssh_cmd, find_cmd))
+            '%s "%s | xargs --no-run-if-empty du"' %
+            (self.ssh_cmd, find_cmd + ' -type f'))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
         assert(code==0) # find | du
-        print 'Getting file sizes...'
+        if verbosity:
+            print 'Getting file sizes...'
         for line in out.split('\n'):
             if line.strip() == '': continue
             size, filename = line.split()
             info[filename] = [int(size)]
         # And the md5sums
-        print 'Getting md5sums...'
+        if verbosity:
+            print 'Getting md5sums...'
         code, out, err = run_cmd(
-            '%s "%s | xargs --no-run-if-empty md5sum"' % (self.ssh_cmd, find_cmd))
+            '%s "%s | xargs --no-run-if-empty md5sum"' %
+            (self.ssh_cmd, find_cmd + ' -type f'))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
@@ -98,10 +103,10 @@ class TapeDrive:
             info[filename].append(md5)
         data = [(k,) + tuple(v) for k, v in info.items()]
         # And symlinks :P
-        print 'Getting symlinks...'
-        find_cmd = 'find %s -type l' % fpath
+        if verbosity:
+            print 'Getting symlinks...'
         code, out, err = run_cmd(
-            '%s "%s"' % (self.ssh_cmd, find_cmd))
+            '%s "%s"' % (self.ssh_cmd, find_cmd + ' -type l'))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
@@ -111,6 +116,19 @@ class TapeDrive:
             info[filename] = [0, 'symlink']
         # One big list.
         data = [(k,) + tuple(v) for k, v in info.items()]
+        # But now descend to subdirs...
+        if verbosity:
+            print 'Getting subdirs...'
+        code, out, err = run_cmd(
+            '%s "%s"' % (self.ssh_cmd, find_cmd + ' -type d'))
+        if code != 0:
+            print 'Error!', out, err
+            raise RuntimeError
+        subdirs = [str(x) for x in out.split('\n') if len(x) != 0]
+        for d in subdirs:
+            if d not in excluded_subdirs:
+                data += self.remote_target_info(d, excluded_subdirs,
+                                                verbosity=verbosity)
         return sorted(data)
 
     def remote_checksums(self, fpath):

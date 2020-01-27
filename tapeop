@@ -397,33 +397,42 @@ elif command == 'import':
         print 'Aborted.'
         sys.exit(1)
 
-    file_number = 0
+    print 'Creating target entries...'
     for target in targets:
         # Is this target already scanned?
-        if db.get_target_id(target) != None:
-            print('Target "%s" already added; skipping.' % target)
-            continue
+        info = db.get_target_info(target)
+        if info is None:
+            info = {'name': target,
+                    'id': db.target_create(target),
+                    'scanned': False,
+                    'parent': None}
+
         # Check for target existence...
-        recs = BackupItem.for_target(db, target)
+        recs = BackupItem.for_target(db, info['name'])
         if len(recs):
             #print 'Backup already exists.'
             if recs[0].status != 'assigned':
                 print target, recs
             if opts.retry:
                 continue
-            raise RuntimeError
+            raise RuntimeError('Inconsistent database state.')
 
-        parent_id = db.get_target_parent(target)
-        if parent_id is None:
-            print 'Getting files and checksums for target "%s"...' % target
-            info = td.remote_target_info(target)
-            print ' ... adding %i files to local database.' % len(info)
-            db.add_files(info, target)
-            print
-        else:
-            print 'Processing child-dir "%s", re-assigning files...' % target
-            n_moved = db.reassign_from_parent(target)
-            print ' ... moved %i files to sub-target.' % n_moved
+    print 'Scanning targets on remote filesystem...'
+
+    for target in targets:
+        info = db.get_target_info(target)
+        if info['scanned']:
+            print('Skipping %s because it is already scanned.' % target)
+            continue
+        exd = db.get_excluded_subdirs(target)
+
+        print 'Getting files and checksums for target "%s" '\
+            '(excluding %i sub-targets) ...' % (target, len(exd))
+        info = td.remote_target_info(target, exd)
+        print ' ... adding %i files to local database.' % len(info)
+        print
+        db.add_files(info, target)
+        db.set_target_scanned(target)
 
 
 elif command == 'assign':

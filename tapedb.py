@@ -23,6 +23,7 @@ TABLE_DEFS = {
     'targets': [
         "`id` integer primary key autoincrement",
         "`name` varchar(2048) unique",
+        "`scanned` integer default 0",
         "`parent_id` integer default null"
         ],
     'backups': [
@@ -63,11 +64,13 @@ class TapeDB:
         c.execute('drop table %s' % name)
 
     # Work with targets.
-    def target_create(self, fpath, ignore_duplicate=True):
+    def target_create(self, fpath, ignore_duplicate=True, assign_parent=True):
         fpath = os.path.normpath(fpath)
         c = self.conn.cursor()
+        parent_id = self.get_target_parent(fpath)
         try:
-            c.execute('insert into targets (name) values (?)', (fpath,))
+            c.execute('insert into targets (name,parent_id) values (?,?)',
+                      (fpath,parent_id))
             self.conn.commit()
         except sqlite3.IntegrityError as e: # duplicate key
             if not ignore_duplicate:
@@ -77,18 +80,25 @@ class TapeDB:
         return c.fetchone()[0]
         
     def add_files(self, file_data, prefix=None):
-        """
-        Introduce files to the database, creating new targets as
-        necessary.  The file_data is a list of tuples of the form
+        """Introduce files to the database.  The file_data is a list of
+        tuples of the form
         
-        (name, size, md5sum)
+          (name, size, md5sum)
 
-        The name contains the full file path, the root of which is
-        the "target" this file will be associated with.
+        The name field contains the full file path.  If prefix is
+        specified, then the files will be stored in the database
+        relative to a target called prefix.  In this case, all file
+        paths must actually overlap with the prefix.  If prefix is
+        None, the full path to the file (excluding the filename) will
+        be used for the target.
+
+        Targets will be created, as needed, to associate with the file
+        info.
 
         Note that if a BackupItem already exists for the target, the
         add will be blocked.  Add all files for a target before you
         "assign" it to a tape.
+
         """
         if prefix is not None:
             print 'Adding files to target %s' % prefix
@@ -138,6 +148,26 @@ class TapeDB:
             if target_id is not None:
                 return target_id
         return None
+
+    def get_target_info(self, target_name):
+        c = self.conn.cursor()
+        if isinstance(target_name, int):
+            c.execute('select name, id, scanned, parent_id from targets '
+                      'where id=?', (target_name, ))
+        else:
+            c.execute('select name, id, scanned, parent_id from targets '
+                      'where name=?', (target_name, ))
+        rows = c.fetchall()
+        if len(rows) == 0:
+            return None
+        return dict([(k, v) for k, v in
+                zip(['name', 'id', 'scanned', 'parent_id'], rows[0])])
+
+    def set_target_scanned(self, target_name):
+        target_id = self.get_target_id(target_name)
+        c = self.conn.cursor()
+        c.execute('update targets set scanned=1 where id=?', (target_id,))
+        self.conn.commit()
 
     def reassign_from_parent(self, child_target_name):
         """

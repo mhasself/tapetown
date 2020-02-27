@@ -1,5 +1,7 @@
 import subprocess as sp
 import os, sys
+import time
+
 
 def run_cmd(cmd):
     # Run cmd through the shell so you can pipe and whatever else.
@@ -63,7 +65,7 @@ class TapeDrive:
         return code, out, err
 
     def remote_target_info(self, fpath, excluded_subdirs=[],
-                           verbosity=0):
+                           verbosity=0, recursion=0):
         """
         Connect to the remote (possibly multiple times) and determine
         file sizes and md5sums of all items below fpath.  Returns list
@@ -71,40 +73,49 @@ class TapeDrive:
         file_size is 0 and md5sum is the string 'symlink'.
         """
         fpath = os.path.normpath(fpath)
+        if verbosity:
+            print time.asctime(), 'Scanning [depth=%i] %s' % (recursion, fpath)
         info = {}
-        find_cmd = 'find %s -maxdepth 1 -mindepth 1' % fpath
         # Get file sizes
+        if verbosity:
+            print time.asctime(), 'Getting file sizes...'
+        find_cmd = 'find %s -maxdepth 1 -mindepth 1' % fpath
         code, out, err = run_cmd(
-            '%s "%s | xargs --no-run-if-empty du"' %
+            '%s "%s | xargs --no-run-if-empty -d \'\\n\' du"' %
             (self.ssh_cmd, find_cmd + ' -type f'))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
         assert(code==0) # find | du
-        if verbosity:
-            print 'Getting file sizes...'
+        lines = out.split('\n')
         for line in out.split('\n'):
             if line.strip() == '': continue
-            size, filename = line.split()
+            size, filename = line.split('\t')
             info[filename] = [int(size)]
+        if verbosity:
+            print time.asctime(), ' ... retrieved %i files (total %.1f MB)' % \
+                (len(info.keys()), sum([x[0] for x in info.values()]) / 1e3)
         # And the md5sums
         if verbosity:
-            print 'Getting md5sums...'
+            print time.asctime(), 'Getting md5sums...'
         code, out, err = run_cmd(
-            '%s "%s | xargs --no-run-if-empty md5sum"' %
+            '%s "%s | xargs --no-run-if-empty -d \'\\n\' md5sum"' %
             (self.ssh_cmd, find_cmd + ' -type f'))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
         for line in out.split('\n'):
             if line.strip() == '': continue
-            md5, filename = line.split()
+            assert(line[32:34] == '  ')
+            md5, filename = line[:32], line[34:].strip()
             assert filename in info
             info[filename].append(md5)
         data = [(k,) + tuple(v) for k, v in info.items()]
+        if verbosity:
+            print time.asctime(), ' ... done.'
         # And symlinks :P
         if verbosity:
-            print 'Getting symlinks...'
+            print time.asctime(), 'Getting symlinks...'
         code, out, err = run_cmd(
             '%s "%s"' % (self.ssh_cmd, find_cmd + ' -type l'))
         if code != 0:
@@ -116,19 +127,26 @@ class TapeDrive:
             info[filename] = [0, 'symlink']
         # One big list.
         data = [(k,) + tuple(v) for k, v in info.items()]
+        if verbosity:
+            print time.asctime(), ' ... done.'
         # But now descend to subdirs...
         if verbosity:
-            print 'Getting subdirs...'
+            print time.asctime(), 'Getting subdir list...'
         code, out, err = run_cmd(
             '%s "%s"' % (self.ssh_cmd, find_cmd + ' -type d'))
         if code != 0:
             print 'Error!', out, err
             raise RuntimeError
         subdirs = [str(x) for x in out.split('\n') if len(x) != 0]
+        if verbosity:
+            print time.asctime(), 'Descending into %i subdirs...' % len(subdirs)
         for d in subdirs:
             if d not in excluded_subdirs:
                 data += self.remote_target_info(d, excluded_subdirs,
-                                                verbosity=verbosity)
+                                                verbosity=verbosity,
+                                                recursion=recursion+1)
+            elif verbosity:
+                print(' ... excluded %s' % d)
         return sorted(data)
 
     def remote_checksums(self, fpath):

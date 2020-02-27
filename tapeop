@@ -57,7 +57,7 @@ o = o.OptionParser(usage=USAGE)
 o.add_option('--retry', action='store_true')
 o.add_option('--no-db-update', action='store_true')
 o.add_option('-c', '--config-file', default='tape.conf')
-o.add_option('-v', '--verbose', action='store_true')
+o.add_option('-v', '--verbose', action='store_true', default=False)
 opts, args = o.parse_args()
 
 from ConfigParser import ConfigParser
@@ -400,15 +400,12 @@ elif command == 'import':
     print 'Creating target entries...'
     for target in targets:
         # Is this target already scanned?
-        info = db.get_target_info(target)
-        if info is None:
-            info = {'name': target,
-                    'id': db.target_create(target),
-                    'scanned': False,
-                    'parent': None}
+        target_id = db.target_create(target,
+                                     ignore_duplicate=True,
+                                     assign_parent=True)
 
         # Check for target existence...
-        recs = BackupItem.for_target(db, info['name'])
+        recs = BackupItem.for_target(db, target)
         if len(recs):
             #print 'Backup already exists.'
             if recs[0].status != 'assigned':
@@ -428,7 +425,7 @@ elif command == 'import':
 
         print 'Getting files and checksums for target "%s" '\
             '(excluding %i sub-targets) ...' % (target, len(exd))
-        info = td.remote_target_info(target, exd)
+        info = td.remote_target_info(target, exd, verbosity=int(opts.verbose))
         print ' ... adding %i files to local database.' % len(info)
         print
         db.add_files(info, target)

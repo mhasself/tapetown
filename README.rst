@@ -73,6 +73,12 @@ keys under the ``[default]`` heading.  The role of each key is:
   a few different commands on the remote system, including ``md5sum``,
   ``du``, and ``tar``.
 
+Special settings:
+* ``emulator_dir``: If this setting is present, then the system will
+  archive to tar files on the local filesystem at the path indicated
+  by ``emulator_dir``.  This can be used to test the system without
+  needing to have a real tape drive.
+
 
 Status and Tape Management
 ==========================

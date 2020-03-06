@@ -10,6 +10,8 @@ Status / database access -- passive:
 
   status - show breakdown of the active tape and backup jobs.
 
+  unassigned - show number and total size of unassigned targets.
+
   tape_detail [tape_name] [file_number] [-v] - print contents of the
     indicated tape, with status information.  If file_number is
     provided, only that file_number is shown.  If -v is given, the
@@ -56,6 +58,10 @@ import optparse as o
 o = o.OptionParser(usage=USAGE)
 o.add_option('--retry', action='store_true')
 o.add_option('--no-db-update', action='store_true')
+o.add_option('--no-scan', action='store_true', help=
+             'Use this switch for doing blind backups with no need for readback '
+             'confirmation.  The source tree for each target will not be scanned, '
+             'so no filenames / checksums will be stored in the local database.')
 o.add_option('-c', '--config-file', default='tape.conf')
 o.add_option('-v', '--verbose', action='store_true', default=False)
 opts, args = o.parse_args()
@@ -152,9 +158,15 @@ if command == 'status':
     print_tape_report(db, tape_name)
     sys.exit(0)
 
+elif command == 'unassigned':
+    targets = db.get_unassigned_targets(get_sizes=True) 
+    size_gb = sum([t[2] for t in targets if t[2] is not None]) / 1e6
+    print 'There are %i unassigned targets (%.3f GB).' % (len(targets), size_gb)
+    print
+    
 elif command == 'tapes':
     targets = db.get_unassigned_targets() 
-    print '\nThere are %i unassigned targets.\n' % len(targets)
+    print '\nThere are %i unassigned targets.  (Use "unassigned" to see size.)\n' % len(targets)
     print 'All tapes in database:'
 
     tape_infos = db.get_tape_info(token)
@@ -414,8 +426,15 @@ elif command == 'import':
                 continue
             raise RuntimeError('Inconsistent database state.')
 
-    print 'Scanning targets on remote filesystem...'
+    if opts.no_scan:
+        print('\n  *** The no-scan option has been selected ***')
+        print('\n  *** Checksumming for data integrity will not be supported;')
+        print('      All targets will report 0 size (but will archive in full).')
+        for target in targets:
+            db.set_target_scanned(target)
+        sys.exit(0)
 
+    print 'Scanning targets on remote filesystem...'
     for target in targets:
         info = db.get_target_info(target)
         if info['scanned']:
@@ -423,8 +442,8 @@ elif command == 'import':
             continue
         exd = db.get_excluded_subdirs(target)
 
-        print 'Getting files and checksums for target "%s" '\
-            '(excluding %i sub-targets) ...' % (target, len(exd))
+        print time.asctime(), 'Getting files and checksums for target:\n'\
+            '%s (excluding %i sub-targets) ...' % (target, len(exd))
         info = td.remote_target_info(target, exd, verbosity=int(opts.verbose))
         print ' ... adding %i files to local database.' % len(info)
         print

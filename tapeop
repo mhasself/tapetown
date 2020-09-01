@@ -302,6 +302,7 @@ elif command == 'archive':
     t0 = time.time()
     excluded = db.get_excluded_subdirs(info.name)
     code, out, err = td.archive_remote(info.name, excluded)
+    updated = False
     if code == 0:
         if opts.no_db_update:
             print 'Archive job succeeded, but DB will not be updated.'
@@ -311,11 +312,19 @@ elif command == 'archive':
             job.status = 'recorded'
             job.file_number = next_file_number
             job.commit()
+            updated = True
     else:
         print '... exit code=%i' % code
         print out, err
     print 'Time elapsed:  %.1f minutes ' % ((time.time() - t0)/60.)
-    
+    if not updated:
+        print
+        print 'Database not updated.  If you choose to do so manually, the command is:'
+        print
+        print ('update backups set file_number=%i,status=\'recorded\' '
+               'where target_id=%i;' % (next_file_number, job.target_id))
+        print
+
 elif command == 'confirm':
     # get file number...
     job_mask = ['recorded']

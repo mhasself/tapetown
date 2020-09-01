@@ -159,13 +159,19 @@ class TapeDrive:
         return [x.split() for x in out.split('\n')]
 
     def archive_remote(self, fpath, exclude_patterns=[]):
+        """
+        Copies a target to tape, over ssh, via tar.  Returns (code,
+        out, err) which are the exit code (integer), stdout and stderr
+        from the command.  out will probably be None.  code will be 0 on
+        success.  err should be presented to the user if code != 0.
+        """
         fpath = os.path.normpath(fpath)
         print 'Archiving: %s' % fpath
         # Modifiers to exclude handled children.
         ex_pats = ' '.join(['--exclude="%s"' % p for p in exclude_patterns])
         code, out, err = run_cmd(
             '%s tar -c %s %s > %s' % (self.ssh_cmd, ex_pats, fpath, self.nst))
-        assert(code == 0)
+        # Only proceed if code is 0!
         return code, out, err
 
 

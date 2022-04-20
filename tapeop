@@ -64,6 +64,8 @@ o.add_option('--no-scan', action='store_true', help=
              'so no filenames / checksums will be stored in the local database.')
 o.add_option('-c', '--config-file', default='tape.conf')
 o.add_option('-v', '--verbose', action='store_true', default=False)
+o.add_option('--repeat', action='store_true', help=
+             "Keep running this command until an error occurs.")
 opts, args = o.parse_args()
 
 from ConfigParser import ConfigParser
@@ -86,6 +88,7 @@ tape_id, tape_name = db.get_active_tape()
 
 EXIT_NO_DATA = 40
 EXIT_REQUEST = 41
+EXIT_TROUBLE = 42
 
 exit_file = 'exit_file'
 if os.path.exists(exit_file):
@@ -284,126 +287,134 @@ elif command == 'where_is':
 
 
 elif command == 'archive':
-    jobs = db.get_tape_work(tape_name, 'assigned')
-    if len(jobs) == 0:
-        sys.exit(EXIT_NO_DATA) # no jobs left.
-    job = jobs[0]
-    info = job.get_target_info()
+    while last_exit_flag == 0:
+        jobs = db.get_tape_work(tape_name, 'assigned')
+        if len(jobs) == 0:
+            print('No jobs found.')
+            sys.exit(EXIT_NO_DATA) # no jobs left.
+        job = jobs[0]
+        info = job.get_target_info()
 
-    report = db.get_tape_report(tape_name)
-    if len(report) == 0:
-        next_file_number = 0
-    else:
-        next_file_number = report[-1][-1]+1
-    print 'Seeking to file_number=%i' % next_file_number
-    td.goto(next_file_number)
-
-    print 'Copying %.3f GB from network to tape...' % (info.size_kb / 1e6)
-    t0 = time.time()
-    excluded = db.get_excluded_subdirs(info.name)
-    code, out, err = td.archive_remote(info.name, excluded)
-    updated = False
-    if code == 0:
-        if opts.no_db_update:
-            print 'Archive job succeeded, but DB will not be updated.'
+        report = db.get_tape_report(tape_name)
+        if len(report) == 0:
+            next_file_number = 0
         else:
-            print '... success.'
-            print 'Marking record as archived.'
-            job.status = 'recorded'
-            job.file_number = next_file_number
-            job.commit()
-            updated = True
-    else:
-        print '... exit code=%i' % code
-        print out, err
-    print 'Time elapsed:  %.1f minutes ' % ((time.time() - t0)/60.)
-    if not updated:
-        print
-        print 'Database not updated.  If you choose to do so manually, the command is:'
-        print
-        print ('update backups set file_number=%i,status=\'recorded\' '
-               'where target_id=%i;' % (next_file_number, job.target_id))
-        print
+            next_file_number = report[-1][-1]+1
+        print 'Seeking to file_number=%i' % next_file_number
+        td.goto(next_file_number)
+
+        print 'Copying %.3f GB from network to tape...' % (info.size_kb / 1e6)
+        t0 = time.time()
+        excluded = db.get_excluded_subdirs(info.name)
+        code, out, err = td.archive_remote(info.name, excluded)
+        updated = False
+        if code == 0:
+            if opts.no_db_update:
+                print 'Archive job succeeded, but DB will not be updated.'
+            else:
+                print '... success.'
+                print 'Marking record as archived.'
+                job.status = 'recorded'
+                job.file_number = next_file_number
+                job.commit()
+                updated = True
+        else:
+            print '... exit code=%i' % code
+            print out, err
+            sys.exit(EXIT_TROUBLE)
+        print 'Time elapsed:  %.1f minutes ' % ((time.time() - t0)/60.)
+        if not updated:
+            print
+            print 'Database not updated.  If you choose to do so manually, the command is:'
+            print
+            print ('update backups set file_number=%i,status=\'recorded\' '
+                   'where target_id=%i;' % (next_file_number, job.target_id))
+            print
+
+        if not opts.repeat:
+            break
+
+    print('Exiting ... pass --repeat to keep doing this.')
+
 
 elif command == 'confirm':
     # get file number...
     job_mask = ['recorded']
     if opts.retry:
         job_mask.append('confirmed')
-    jobs = db.get_tape_work(tape_name, job_mask)
-    print 'Found %i jobs to confirm.' % len(jobs)
-    if len(jobs) == 0:
-        sys.exit(EXIT_NO_DATA)
-    if token == 'next':
-        token = jobs[0].file_number
-    elif token is None:
-        print 'The next one is file_number=%i.' % jobs[0].file_number
-        print 'Pass a file_number, or "next" to process the next job.'
-        sys.exit(1)
-    for j in jobs:
-        if int(token) == j.file_number:
-            print 'Matched file_number=%i' % j.file_number
-            break
-    else:
-        print 'Could not find outstanding job at file_number=%s' % token
-        sys.exit(1)
-    # Run the confirmation.
-    info = j.get_target_info()
-    assert(j.file_number >= 0)
-    print 'Seeking to file_number %i...' % j.file_number
-    td.goto(j.file_number)
-    print 'Checksumming %.3f GB from tape...' % (info.size_kb / 1e6)
-    CD = td.tape_checksums()
-    CD1 = {}
-    for row in CD:
-        # Check prefix match; strip it off.
-        assert(row[1].startswith(info.name[1:] + '/'))
-        fname = row[1][len(info.name):]
-        CD1[fname] = row[0]
-
-    # If this archive has symlinks, then we need list the contents of
-    # the archive and record the presence of those pseudo-files.
-    n_symlinks = sum([f[2] == 'symlink' for f in info.files])
-    if n_symlinks:
-        print 'Re-seeking to file_number %i...' % j.file_number
-        td.goto(j.file_number)
-        print 'Confirming %i symlinks...' % n_symlinks
-        all_files = td.tape_files()
-        for fname in all_files:
-            if fname.endswith('/'):
-                continue
-            # Check prefix match; strip it off.
-            assert(fname.startswith(info.name[1:] + '/'))
-            fname = fname[len(info.name):]
-            if fname not in CD1:
-                CD1[fname] = 'symlink'
-
-    ok = True
-    for name, size_kb, md5 in info.files:
-        if opts.verbose:
-            print '%s [%s]...' % (name, md5),
-        if md5 != CD1.pop(name):
-            print 'Failed md5sum: %s' % name
-            ok = False
-        elif opts.verbose:
-            print 'ok'
-
-    if len(CD1):
-        ok = False
-        print('Backup contained %i more files than expected!' % len(CD1))
-        print('For example:')
-        for k, v in CD1.items()[:5]:
-            print '    %s [%s]' % (k, v)
-        print()
-
-    if ok:
-        if opts.no_db_update:
-            print 'Confirm job succeeded, but DB will not be updated.'
+    while last_exit_flag == 0:
+        jobs = db.get_tape_work(tape_name, job_mask)
+        print 'Found %i jobs to confirm.' % len(jobs)
+        if len(jobs) == 0:
+            sys.exit(EXIT_NO_DATA)
+        if token is None or token == 'next':
+            j = jobs[0]
         else:
-            print 'Marking record as confirmed.'
-            j.status = 'confirmed'
-            j.commit()
-    print
+            for j in jobs:
+                if int(token) == j.file_number:
+                    print 'Matched file_number=%i' % j.file_number
+                    break
+            else:
+                print 'Could not find outstanding job at file_number=%s' % token
+                sys.exit(1)
+        # Run the confirmation.
+        info = j.get_target_info()
+        assert(j.file_number >= 0)
+        print 'Seeking to file_number %i...' % j.file_number
+        td.goto(j.file_number)
+        print 'Checksumming %.3f GB from tape...' % (info.size_kb / 1e6)
+        CD = td.tape_checksums()
+        CD1 = {}
+        for row in CD:
+            # Check prefix match; strip it off.
+            assert(row[1].startswith(info.name[1:] + '/'))
+            fname = row[1][len(info.name):]
+            CD1[fname] = row[0]
+
+        # If this archive has symlinks, then we need list the contents of
+        # the archive and record the presence of those pseudo-files.
+        n_symlinks = sum([f[2] == 'symlink' for f in info.files])
+        if n_symlinks:
+            print 'Re-seeking to file_number %i...' % j.file_number
+            td.goto(j.file_number)
+            print 'Confirming %i symlinks...' % n_symlinks
+            all_files = td.tape_files()
+            for fname in all_files:
+                if fname.endswith('/'):
+                    continue
+                # Check prefix match; strip it off.
+                assert(fname.startswith(info.name[1:] + '/'))
+                fname = fname[len(info.name):]
+                if fname not in CD1:
+                    CD1[fname] = 'symlink'
+
+        ok = True
+        for name, size_kb, md5 in info.files:
+            if opts.verbose:
+                print '%s [%s]...' % (name, md5),
+            if md5 != CD1.pop(name):
+                print 'Failed md5sum: %s' % name
+                ok = False
+            elif opts.verbose:
+                print 'ok'
+
+        if len(CD1):
+            ok = False
+            print('Backup contained %i more files than expected!' % len(CD1))
+            print('For example:')
+            for k, v in CD1.items()[:5]:
+                print '    %s [%s]' % (k, v)
+            print()
+
+        if ok:
+            if opts.no_db_update:
+                print 'Confirm job succeeded, but DB will not be updated.'
+            else:
+                print 'Marking record as confirmed.'
+                j.status = 'confirmed'
+                j.commit()
+        else:
+            sys.exit(1)
 
 elif command == 'import':
 

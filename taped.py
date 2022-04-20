@@ -2,12 +2,16 @@ import subprocess as sp
 import os, sys
 import time
 
-
-def run_cmd(cmd):
+def run_cmd(cmd, raise_on_error=True):
     # Run cmd through the shell so you can pipe and whatever else.
     p = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE, shell=True)
     out, err = p.communicate()
+    if raise_on_error and (p.returncode != 0):
+        sys.stderr.write('Command failed with code %i: %s' % (p.returncode, cmd))
+        sys.stderr.write('stdout: %s\nstderr: %s\n' % (out, err))
+        raise RuntimeError()
     return p.returncode, out, err
+
 
 class TapeDrive:
     def __init__(self, nst_addr, ssh_cmd=None):
@@ -21,7 +25,6 @@ class TapeDrive:
     def status(self):
         #File number=0, block number=0, partition=0.
         code, out, err = run_cmd(self.mt + 'status')
-        assert(code == 0)
         tokens = [tk.strip().replace('.','').replace(' ','_').lower() 
                   for tk in out.split('\n')[1].split(',')]
         tokens = [x.split('=') for x in tokens]
@@ -35,9 +38,8 @@ class TapeDrive:
         # it has passed data equal to the size of system RAM.  dd does
         # better.
         code, out, err = run_cmd(
-            'dd if=%s bs=512k | tar -x ' % self.nst + 
+            'dd if=%s bs=512k | tar -f - -x ' % self.nst + 
             '--to-command=\'sh -c "md5sum | sed \\"s|-|\$TAR_FILENAME|\\""\'')
-        assert(code == 0)
         return [line.strip().split() for line in out.split('\n')
                 if line.strip() != '']
 
@@ -46,8 +48,7 @@ class TapeDrive:
         list of files.  Note this includes directories and symlinks
         (unlike tape_checksums)."""
         code, out, err = run_cmd(
-            'dd if=%s bs=512k | tar -t ' % self.nst)
-        assert(code == 0)
+            'dd if=%s bs=512k | tar -f - -t ' % self.nst)
         return [line.strip() for line in out.split('\n')
                 if line.strip() != '']
 
@@ -61,7 +62,6 @@ class TapeDrive:
             code, out, err = run_cmd(self.mt + 'fsf %i' % delta)
         if delta <= 0:
             code, out, err = run_cmd(self.mt + 'bsfm %i' % (1 - delta))
-        assert(code == 0)  # goto failed
         return code, out, err
 
     def remote_target_info(self, fpath, excluded_subdirs=[],
@@ -83,9 +83,6 @@ class TapeDrive:
         code, out, err = run_cmd(
             '%s "%s | xargs --no-run-if-empty -d \'\\n\' du"' %
             (self.ssh_cmd, find_cmd + ' -type f'))
-        if code != 0:
-            print 'Error!', out, err
-            raise RuntimeError
         assert(code==0) # find | du
         lines = out.split('\n')
         for line in out.split('\n'):
@@ -101,9 +98,6 @@ class TapeDrive:
         code, out, err = run_cmd(
             '%s "%s | xargs --no-run-if-empty -d \'\\n\' md5sum"' %
             (self.ssh_cmd, find_cmd + ' -type f'))
-        if code != 0:
-            print 'Error!', out, err
-            raise RuntimeError
         for line in out.split('\n'):
             if line.strip() == '': continue
             assert(line[32:34] == '  ')
@@ -118,9 +112,6 @@ class TapeDrive:
             print time.asctime(), 'Getting symlinks...'
         code, out, err = run_cmd(
             '%s "%s"' % (self.ssh_cmd, find_cmd + ' -type l'))
-        if code != 0:
-            print 'Error!', out, err
-            raise RuntimeError
         for line in out.split('\n'):
             if line.strip() == '': continue
             filename = line
@@ -134,9 +125,6 @@ class TapeDrive:
             print time.asctime(), 'Getting subdir list...'
         code, out, err = run_cmd(
             '%s "%s"' % (self.ssh_cmd, find_cmd + ' -type d'))
-        if code != 0:
-            print 'Error!', out, err
-            raise RuntimeError
         subdirs = [str(x) for x in out.split('\n') if len(x) != 0]
         if verbosity:
             print time.asctime(), 'Descending into %i subdirs...' % len(subdirs)
@@ -153,9 +141,6 @@ class TapeDrive:
         fpath = os.path.normpath(fpath)
         code, out, err = run_cmd(
             '%s md5sum %s/*' % (self.ssh_cmd, fpath))
-        if code != 0:
-            print 'Error!', out, err
-            raise RuntimeError
         return [x.split() for x in out.split('\n')]
 
     def archive_remote(self, fpath, exclude_patterns=[]):
@@ -170,7 +155,8 @@ class TapeDrive:
         # Modifiers to exclude handled children.
         ex_pats = ' '.join(['--exclude="%s"' % p for p in exclude_patterns])
         code, out, err = run_cmd(
-            '%s tar -c %s %s > %s' % (self.ssh_cmd, ex_pats, fpath, self.nst))
+            '%s tar -c %s %s > %s' % (self.ssh_cmd, ex_pats, fpath, self.nst),
+            False)
         # Only proceed if code is 0!
         return code, out, err
 

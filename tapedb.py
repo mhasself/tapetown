@@ -451,12 +451,15 @@ class BackupItem:
                       'where id=%s' % self._id, data)
         self.db.conn.commit()
 
-    def destroy(self):
-        c = self.db.conn.cursor()
+    def destroy(self, cursor=None):
+        atomic = (cursor is None)
+        if atomic:
+            cursor = self.db.conn.cursor()
         if self._id is None:
             return
-        c.execute('delete from backups where id=?', (self._id,))
-        self.db.conn.commit()
+        cursor.execute('delete from backups where id=?', (self._id,))
+        if atomic:
+            self.db.conn.commit()
         self._id = None
 
     def get_target_info(self):

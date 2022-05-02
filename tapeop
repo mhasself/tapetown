@@ -240,9 +240,10 @@ elif command == 'close_tape':
 
     jobs = db.get_tape_work(tape_name, ['assigned'])
     print 'Found %i jobs to dissociate.' % len(jobs)
+    c = db.conn.cursor()
     for j in jobs:
-        j.destroy()
-
+        j.destroy(cursor=c)
+    db.conn.commit()
     db.close_tape(tape_name)
 
 elif command == 'tape_detail':
@@ -287,6 +288,9 @@ elif command == 'where_is':
 
 
 elif command == 'archive':
+
+    transfer_rate_kbs = None
+
     while last_exit_flag == 0:
         jobs = db.get_tape_work(tape_name, 'assigned')
         if len(jobs) == 0:
@@ -294,6 +298,10 @@ elif command == 'archive':
             sys.exit(EXIT_NO_DATA) # no jobs left.
         job = jobs[0]
         info = job.get_target_info()
+        if transfer_rate_kbs:
+            all_size_kb = sum([j.get_target_info().size_kb for j in jobs])
+            rate_string = '(%.2f hours)' % (all_size_kb / transfer_rate_kbs / 3600)
+            print 'Total data remaining: %.3f GB %s' % (all_size_kb / 1e6, rate_string)
 
         report = db.get_tape_report(tape_name)
         if len(report) == 0:
@@ -304,7 +312,7 @@ elif command == 'archive':
         td.goto(next_file_number)
 
         print 'Copying %.3f GB from network to tape...' % (info.size_kb / 1e6)
-        t0 = time.time()
+        start_time = time.time()
         excluded = db.get_excluded_subdirs(info.name)
         code, out, err = td.archive_remote(info.name, excluded)
         updated = False
@@ -322,7 +330,12 @@ elif command == 'archive':
             print '... exit code=%i' % code
             print out, err
             sys.exit(EXIT_TROUBLE)
-        print 'Time elapsed:  %.1f minutes ' % ((time.time() - t0)/60.)
+
+        elapsed = time.time() - start_time
+        transfer_rate_kbs = info.size_kb / elapsed
+        print(' -- completed %.3f GB in %.1f minutes; rate is %.3f GB/min' % (
+                info.size_kb/1e6, elapsed / 60, transfer_rate_kbs / 1e6 * 60))
+
         if not updated:
             print
             print 'Database not updated.  If you choose to do so manually, the command is:'
@@ -342,14 +355,23 @@ elif command == 'confirm':
     job_mask = ['recorded']
     if opts.retry:
         job_mask.append('confirmed')
+
+    transfer_rate_kbs = None
+
     while last_exit_flag == 0:
         jobs = db.get_tape_work(tape_name, job_mask)
         print 'Found %i jobs to confirm.' % len(jobs)
         if len(jobs) == 0:
             sys.exit(EXIT_NO_DATA)
         if token is None or token == 'next':
+            all_size_kb = sum([j.get_target_info().size_kb for j in jobs])
+            rate_string = '(? hours)'
+            if transfer_rate_kbs:
+                rate_string = '(%.2f hours)' % (all_size_kb / transfer_rate_kbs / 3600)
+            print 'Total data remaining: %.3f GB %s' % (all_size_kb / 1e6, rate_string)
             j = jobs[0]
         else:
+            all_size_kb = None
             for j in jobs:
                 if int(token) == j.file_number:
                     print 'Matched file_number=%i' % j.file_number
@@ -362,7 +384,9 @@ elif command == 'confirm':
         assert(j.file_number >= 0)
         print 'Seeking to file_number %i...' % j.file_number
         td.goto(j.file_number)
+
         print 'Checksumming %.3f GB from tape...' % (info.size_kb / 1e6)
+        start_time = time.time()
         CD = td.tape_checksums()
         CD1 = {}
         for row in CD:
@@ -405,6 +429,11 @@ elif command == 'confirm':
             for k, v in CD1.items()[:5]:
                 print '    %s [%s]' % (k, v)
             print()
+
+        elapsed = time.time() - start_time
+        transfer_rate_kbs = info.size_kb / elapsed
+        print(' -- completed %.3f GB in %.1f minutes; rate is %.3f GB/min' % (
+                info.size_kb/1e6, elapsed / 60, transfer_rate_kbs / 1e6 * 60))
 
         if ok:
             if opts.no_db_update:

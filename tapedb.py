@@ -398,7 +398,7 @@ class BackupItem:
     VALID_STATUS = ['new', 'assigned', 'recorded', 'confirmed']
 
     @classmethod
-    def new(cls, db, target):
+    def new(cls, db, target, commit=True):
         self = cls()
         self._id = None
         self.db = db
@@ -408,7 +408,8 @@ class BackupItem:
         self.tape_id = None
         self.file_number = -1
         self.status = 'new'
-        self.commit()
+        if commit:
+            self.commit()
         return self
 
     @classmethod
@@ -437,19 +438,22 @@ class BackupItem:
             row[k] for k in ['id', 'tape_id', 'file_number', 'status', 'target_id']]
         return self
 
-    def commit(self):
+    def commit(self, cursor=None):
         assert self.status in self.VALID_STATUS
-        c = self.db.conn.cursor()
+        atomic = (cursor is None)
+        if atomic:
+            cursor = self.db.conn.cursor()
         data = (self.target_id, self.tape_id, self.file_number, self.status)
         if self._id is None:
-            c.execute('insert into backups '
+            cursor.execute('insert into backups '
                       '(target_id, tape_id, file_number, status) '
                       'values (?,?,?,?)', data)
-            self._id = c.lastrowid
+            self._id = cursor.lastrowid
         else:
-            c.execute('update backups set target_id=?, tape_id=?, file_number=?, status=? '
-                      'where id=%s' % self._id, data)
-        self.db.conn.commit()
+            cursor.execute('update backups set target_id=?, tape_id=?, file_number=?, status=? '
+                           'where id=%s' % self._id, data)
+        if atomic:
+            self.db.conn.commit()
 
     def destroy(self, cursor=None):
         atomic = (cursor is None)

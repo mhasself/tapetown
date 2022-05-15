@@ -218,25 +218,31 @@ class TapeDB:
                               (target_id,))
         return [r[0] for r in c]
 
-    def get_unassigned_targets(self, get_sizes=False):
+    def get_unassigned_targets(self, get_sizes=False,
+                               include_unscanned=False):
         """
         Find targets that do not have an associated entry in backups.
+        Unless unclude_unscanned=True, this will not include unscanned
+        targets.
+
         """
         c = self.conn.cursor()
+        scan_clause = '' if include_unscanned \
+            else 'and T.scanned == 1 '
         if get_sizes:
             c.execute('select T.id, T.name, sum(F.size_kb) '
                       'from targets as T left join backups as B '
                       'on T.id=B.target_id '
                       'left join files F on T.id=F.target_id '
-                      'where B.target_id is null '
+                      'where B.target_id is null %s'
                       'group by T.id, T.name '
-                      'order by T.name')
+                      'order by T.name' % scan_clause)
         else:
             c.execute('select T.id, T.name '
                       'from targets as T left join backups as B '
                       'on T.id=B.target_id '
-                      'where B.target_id is null '
-                      'order by T.name')
+                      'where B.target_id is null %s'
+                      'order by T.name' % scan_clause)
         return [r for r in c]
 
     def find_file(self, filename):
